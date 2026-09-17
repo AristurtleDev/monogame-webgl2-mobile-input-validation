@@ -1,0 +1,60 @@
+html,
+body {
+    width: 100%;
+    min-height: 100%;
+    margin: 0;
+}
+
+body {
+    background: #101418;
+    color: #f5f7fa;
+}
+
+#validation-page {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+    min-height: 100dvh;
+}
+
+#monogame-host {
+    position: relative;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+}
+
+#canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    border: 0;
+    background: #000000;
+}
+
+#accelerometer-permission-diagnostic {
+    box-sizing: border-box;
+    width: calc(100% - 2rem);
+    margin: 0.5rem 1rem 1rem;
+    resize: vertical;
+}
+
+.host-status {
+    position: absolute;
+    right: 1rem;
+    bottom: 1rem;
+    left: 1rem;
+    margin: 0;
+    padding: 0.75rem 1rem;
+    background: rgba(136, 35, 35, 0.92);
+    color: #ffffff;
+    font: 14px/1.4 "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+}
+
+.noscript-banner {
+    margin: 0;
+    padding: 1rem;
+    background: #882323;
+    color: #ffffff;
+    font: 14px/1.4 "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+}
