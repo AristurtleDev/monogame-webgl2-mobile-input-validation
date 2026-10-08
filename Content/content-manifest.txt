@@ -1,0 +1,9 @@
+Content/arial.xnb
+Content/monogame_logo.xnb
+Content/validation-raw.txt
+Content/validation_effect.xnb
+Content/validation_font.xnb
+Content/validation_loop.xnb
+Content/validation_song.mp3
+Content/validation_song.xnb
+Content/validation_tone.xnb
