@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>MonoGame.Web Mobile Input Validation</title>
+    <style>
+        html, body {
+            width: 100%;
+            min-height: 100%;
+            margin: 0;
+        }
+
+        body {
+            background: #101418;
+            color: #f5f7fa;
+        }
+
+        #validation-page {
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+            min-height: 100dvh;
+        }
+
+        #monogame-host {
+            position: relative;
+            flex: 1 1 auto;
+            min-height: 0;
+            overflow: hidden;
+        }
+
+        #canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            border: 0;
+            background: #000;
+        }
+
+        .host-status {
+            position: absolute;
+            right: 1rem;
+            bottom: 1rem;
+            left: 1rem;
+            margin: 0;
+            padding: 0.75rem 1rem;
+            background: #882323;
+            color: #fff;
+        }
+    </style>
+</head>
+
+<body>
+    <main id="validation-page">
+        <main id="monogame-host"
+              data-application-name="MonoGame.Web Mobile Input Validation"
+              data-canvas-id="canvas"
+              data-content-base-uri="./"
+              data-status-id="monogame-host-status"
+              data-runtime-script-uri="./_framework/dotnet.js"
+              data-host-exports-type-name="TestWebMobileInputValidation.HostExports"
+              data-main-assembly-name="TestWebMobileInputValidation.dll"
+              data-canvas-resize-policy="Adaptive">
+            <canvas id="canvas"
+                    width="960"
+                    height="540"
+                    aria-label="MonoGame mobile input validation canvas"></canvas>
+            <p id="monogame-host-status"
+               class="host-status"
+               hidden
+               role="alert"></p>
+        </main>
+
+    </main>
+
+    <noscript>
+        <p class="noscript-banner">MonoGame.Web requires JavaScript.</p>
+    </noscript>
+
+    <script type="module">
+        const root = document.getElementById("monogame-host");
+        const canvas = document.getElementById("canvas");
+        const statusElement = document.getElementById("monogame-host-status");
+        const { start } = await import("./_monogame/monogame-web-host.js");
+
+        start({
+            root,
+            canvas,
+            managed: {
+                assemblyName: "TestWebMobileInputValidation",
+                hostExportsTypeName: "TestWebMobileInputValidation.HostExports"
+            },
+            applicationName: "MonoGame.Web Mobile Input Validation",
+            canvasResizePolicy: "Adaptive",
+            statusElement
+        });
+    </script>
+</body>
+
+</html>
