@@ -1,0 +1,6 @@
+Assets/validation_effect.xnb
+Assets/validation_font.xnb
+Assets/validation_loop.xnb
+Assets/validation_song.mp3
+Assets/validation_song.xnb
+Assets/validation_tone.xnb

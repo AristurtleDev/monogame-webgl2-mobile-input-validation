@@ -1,0 +1,3 @@
+Assets/arial.xnb
+Assets/monogame_logo.xnb
+Assets/validation-raw.txt

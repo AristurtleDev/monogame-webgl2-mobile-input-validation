@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>MonoGame.Web Browser Host Validation</title>
+    <style>
+        html, body { margin: 0; min-width: 100%; min-height: 100%; overscroll-behavior: none; }
+        #monogame-host { position: fixed; inset: 0; overflow: hidden; }
+        #monogame-host[data-canvas-resize-policy="Project"], #monogame-host[data-canvas-resize-policy="None"] { position: relative; inset: auto; display: inline-block; }
+        #canvas { display: block; width: 100%; height: 100%; border: 0; background: #000; touch-action: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+        #monogame-host[data-canvas-resize-policy="Project"] #canvas, #monogame-host[data-canvas-resize-policy="None"] #canvas { width: auto; height: auto; }
+        #fullscreen-validation-control { position: absolute; z-index: 2; top: 1rem; left: 1rem; }
+        #keyboard-fullscreen-controls { position: absolute; z-index: 2; top: 1rem; left: 1rem; right: 1rem; max-width: 28rem; padding: 0.75rem; border-radius: 0.5rem; background: #17161d; color: white; font: 1rem system-ui, sans-serif; }
+        #keyboard-fullscreen-controls[hidden] { display: none; }
+        #keyboard-fullscreen-controls button { min-height: 44px; padding: 0.5rem 0.75rem; font: inherit; }
+        #keyboard-fullscreen-state { display: block; margin-top: 0.5rem; white-space: pre-line; overflow-wrap: anywhere; }
+        #monogame-shell-loading, #monogame-shell-error { position: absolute; z-index: 1; inset: 0; display: grid; place-items: center; padding: 2rem; background: #17161d; color: #f7f5f5; font-family: system-ui, sans-serif; text-align: center; }
+        #monogame-shell-loading[hidden], #monogame-shell-error[hidden] { display: none; }
+        #monogame-shell-loading { pointer-events: none; }
+        .monogame-shell-panel { max-width: 24rem; }
+        .monogame-shell-brand { display: flex; align-items: center; justify-content: center; gap: 0.75rem; font-size: 1.5rem; font-weight: 700; letter-spacing: 0.04em; }
+        .monogame-shell-brand img { width: 3rem; height: 3rem; }
+        .monogame-shell-brand .monogame-shell-logo { display: block; width: min(14rem, calc(100vw - 4rem)); height: auto; }
+        #monogame-shell-message { margin: 1.5rem 0 0; line-height: 1.5; }
+        .monogame-shell-indicator { width: min(100%, 16rem); height: 0.25rem; margin: 1rem auto 0; overflow: hidden; border-radius: 999px; background: #3d3a45; }
+        .monogame-shell-indicator::before { display: block; width: 40%; height: 100%; content: ""; border-radius: inherit; background: #e73c00; animation: monogame-shell-loading 1.2s ease-in-out infinite; }
+        #monogame-shell-error { background: #321d23; }
+        @keyframes monogame-shell-loading { from { transform: translateX(-125%); } to { transform: translateX(350%); } }
+        @media (prefers-reduced-motion: reduce) { .monogame-shell-indicator::before { animation: none; transform: translateX(75%); } }
+    </style>
+</head>
+<body>
+    <main id="monogame-host">
+        <canvas id="canvas" width="320" height="180" aria-label="MonoGame browser host canvas"></canvas>
+        <section id="keyboard-fullscreen-controls" hidden aria-label="Keyboard fullscreen test">
+            <button id="keyboard-enter-fullscreen" type="button">Enter fullscreen</button>
+            <button id="keyboard-exit-fullscreen" type="button">Exit fullscreen</button>
+            <p>Enter fullscreen, then tap the game button below to open the input dialog.</p>
+            <output id="keyboard-fullscreen-state" role="status" aria-live="polite">Waiting for the game.</output>
+        </section>
+        <section id="monogame-shell-loading" hidden aria-labelledby="monogame-shell-loading-title">
+            <div class="monogame-shell-panel">
+                <div class="monogame-shell-brand">
+                    <img id="monogame-shell-loading-title" class="monogame-shell-logo" src="./mglogo.svg" alt="MonoGame">
+                </div>
+                <p id="monogame-shell-message" role="status" aria-live="polite">Starting MonoGame...</p>
+                <div class="monogame-shell-indicator" aria-hidden="true"></div>
+            </div>
+        </section>
+        <section id="monogame-shell-error" hidden role="alert" aria-labelledby="monogame-shell-error-title">
+            <div class="monogame-shell-panel">
+                <div class="monogame-shell-brand">
+                    <img src="./favicon.ico" alt="">
+                    <span id="monogame-shell-error-title">MonoGame could not start</span>
+                </div>
+                <p id="monogame-shell-error-message"></p>
+            </div>
+        </section>
+    </main>
+    <noscript><p>MonoGame.Web requires JavaScript.</p></noscript>
+    <script type="module">
+        const query = new URLSearchParams(globalThis.location.search);
+        const keyboardFullscreenEnabled = query.has("keyboard-fullscreen");
+        let dialogFullscreenTarget = null;
+        const canvasResizePolicy = query.get("canvas-resize-policy") ?? "Adaptive";
+        const shellMode = query.get("shell");
+        const defaultShellEnabled = shellMode === "default" || shellMode === "error" || shellMode === "canvas-id";
+        const loadingScreen = document.getElementById("monogame-shell-loading");
+        const loadingMessage = document.getElementById("monogame-shell-message");
+        const errorScreen = document.getElementById("monogame-shell-error");
+        const errorMessage = document.getElementById("monogame-shell-error-message");
+        const DropBudgetBatchCount = 65;
+        let entryStopCompletion = null;
+        const DropBudgetFileByteLength = 1024 * 1024;
+        if (defaultShellEnabled) {
+            loadingScreen.hidden = false;
+        }
+
+        function showShellError(message) {
+            loadingScreen.remove();
+            errorMessage.textContent = message;
+            errorScreen.hidden = false;
+        }
+
+        function dispatchKeyboardEvent(type, code, key) {
+            globalThis.dispatchEvent(new KeyboardEvent(type, { code, key }));
+        }
+
+        async function waitForDropBatchReleaseAsync(host, batchNumber) {
+            const timeout = globalThis.performance.now() + 10000;
+            while (host.window.stagedDropBatches.length > 0 || host.window.stagedDropBytes > 0) {
+                if (globalThis.performance.now() >= timeout) {
+                    throw new Error(`Drop batch ${batchNumber} was not released within ten seconds.`);
+                }
+
+                await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
+            }
+        }
+
+        async function validateDropBudgetAsync(host) {
+            const fileSystem = host.native.fileSystem;
+            const fileBytes = new Uint8Array(DropBudgetFileByteLength);
+
+            for (let batchNumber = 1; batchNumber <= DropBudgetBatchCount; batchNumber++) {
+                const file = new File([fileBytes], `drop-budget-${batchNumber}.bin`, {
+                    type: "application/octet-stream"
+                });
+                await host.window.stageDroppedFilesAsync(
+                    [file],
+                    fileSystem,
+                    host.native.notifyFileDrop,
+                    host.native.notifyFileDropComplete);
+                await waitForDropBatchReleaseAsync(host, batchNumber);
+            }
+
+            globalThis.MonoGameWebHostValidation.reportPhase(
+                "dropBudgetValidated",
+                `Validated ${DropBudgetBatchCount} sequential ${DropBudgetFileByteLength}-byte drops across the 64 MiB staging budget.`);
+        }
+
+        globalThis.MonoGameWebHostValidation = {
+            isKeyboardFullscreenValidationEnabled() {
+                return keyboardFullscreenEnabled;
+            },
+            getKeyboardFullscreenCanvasWidth() {
+                return document.getElementById("canvas").clientWidth;
+            },
+            getKeyboardFullscreenCanvasHeight() {
+                return document.getElementById("canvas").clientHeight;
+            },
+            reportKeyboardFullscreenState(phase) {
+                const dialog = document.querySelector("#monogame-host dialog");
+                const fullscreenTarget = document.fullscreenElement;
+                const modal = dialog?.matches(":modal") ?? false;
+                if (phase === "dialog opened") {
+                    if (!modal) {
+                        throw new Error("The keyboard dialog did not open as a modal. Verify the matching framework and runtime packages.");
+                    }
+                    dialogFullscreenTarget = fullscreenTarget;
+                }
+                const retained = phase === "dialog closed" && dialogFullscreenTarget != null
+                    ? `\nFullscreen retained: ${fullscreenTarget === dialogFullscreenTarget ? "yes" : "no"}`
+                    : "";
+                const message = `${phase}\nFullscreen: ${fullscreenTarget?.id ?? "inactive"}\nDialog: ${modal ? "modal" : "closed"}\nInput focused: ${dialog?.contains(document.activeElement) ? "yes" : "no"}${retained}`;
+                document.getElementById("keyboard-fullscreen-state").textContent = message;
+                console.info("[BrowserHostValidation]", "keyboardFullscreenState", message);
+            },
+            reportPhase(phaseName, message) {
+                console.info("[BrowserHostValidation]", phaseName, message);
+                if (phaseName === "entryPoint" && query.has("host-stop-entry")) {
+                    queueMicrotask(() => {
+                        entryStopCompletion = globalThis.MonoGameWebHost.getActiveHost().stop();
+                    });
+                }
+            },
+            validateCanvasSize(drawingBufferWidth, drawingBufferHeight, cssWidth, cssHeight) {
+                const canvas = document.getElementById("canvas");
+                if (canvas == null) {
+                    throw new Error("The validation canvas was not found.");
+                }
+
+                const canvasBounds = canvas.getBoundingClientRect();
+                if (canvas.width !== drawingBufferWidth
+                    || canvas.height !== drawingBufferHeight
+                    || Math.round(canvasBounds.width) !== cssWidth
+                    || Math.round(canvasBounds.height) !== cssHeight) {
+                    throw new Error(`Expected canvas drawing buffer ${drawingBufferWidth}x${drawingBufferHeight} and CSS size ${cssWidth}x${cssHeight}, but found drawing buffer ${canvas.width}x${canvas.height} and CSS size ${canvasBounds.width}x${canvasBounds.height}.`);
+                }
+            },
+            getDevicePixelWidth(cssWidth) {
+                return Math.round(cssWidth * globalThis.devicePixelRatio);
+            },
+            getDevicePixelHeight(cssHeight) {
+                return Math.round(cssHeight * globalThis.devicePixelRatio);
+            },
+            requestMouseMove(cssX, cssY) {
+                const canvas = document.getElementById("canvas");
+                if (canvas == null) {
+                    throw new Error("The validation canvas was not found.");
+                }
+
+                canvas.dispatchEvent(new MouseEvent("mousemove", {
+                    bubbles: true,
+                    clientX: cssX,
+                    clientY: cssY
+                }));
+            },
+            requestFocusLifecycleValidation() {
+                globalThis.dispatchEvent(new Event("blur"));
+                globalThis.dispatchEvent(new Event("focus"));
+            },
+            requestKeyboardKeyDown(code, key) {
+                dispatchKeyboardEvent("keydown", code, key);
+            },
+            requestKeyboardKeyUp(code, key) {
+                dispatchKeyboardEvent("keyup", code, key);
+            },
+            requestKeyboardFocusLoss() {
+                globalThis.dispatchEvent(new Event("blur"));
+            },
+            requestKeyboardFocusRestore() {
+                globalThis.dispatchEvent(new Event("focus"));
+            },
+            isManualFocusValidationEnabled() {
+                return !query.has("auto-exit") || query.has("fullscreen") || query.has("embed-fullscreen") || query.has("file-drop");
+            },
+            isFullscreenValidationEnabled() {
+                return query.has("fullscreen");
+            },
+            isEmbeddingFullscreenValidationEnabled() {
+                return query.has("embed-fullscreen");
+            },
+            isAdaptiveCanvasResizeValidationEnabled() {
+                return canvasResizePolicy === "Adaptive";
+            },
+            isKeyboardValidationEnabled() {
+                return query.has("keyboard");
+            },
+            isFileDropValidationEnabled() {
+                return query.has("file-drop");
+            },
+            isUnsupportedFeatureValidationEnabled() {
+                return query.has("unsupported-features");
+            },
+            isEmscriptenMainLoopFailureValidationEnabled() {
+                return query.has("emscripten-main-loop-error");
+            },
+        };
+
+        try {
+            const root = document.getElementById("monogame-host");
+            const canvas = document.getElementById("canvas");
+            if (root == null || canvas == null) {
+                throw new Error("The validation host elements were not found.");
+            }
+
+            if (shellMode === "canvas-id") {
+                canvas.id = "validation-canvas";
+            }
+
+            const { start } = await import("./_monogame/monogame-web-host.js");
+            const hostOptions = {
+                root,
+                canvas,
+                applicationName: "MonoGame.Web Browser Host Validation",
+                startupContentManifestUri: query.has("host-ready-error") ? "_monogame/missing-validation-manifest.txt" : undefined,
+                canvasResizePolicy: shellMode === "error" ? "Invalid" : canvasResizePolicy,
+                onStatus: ({ stage, message }) => {
+                    globalThis.MonoGameWebHostValidation.reportPhase(stage, message);
+                    if (defaultShellEnabled) {
+                        loadingMessage.textContent = message;
+                    }
+                },
+                onFirstFrame: () => {
+                    if (defaultShellEnabled) {
+                        loadingScreen.remove();
+                    }
+
+                    globalThis.MonoGameWebHostValidation.reportPhase("objectBootstrap", "The first managed frame completed.");
+
+                    if (canvasResizePolicy === "Adaptive" && !query.has("embed-fullscreen") && !keyboardFullscreenEnabled) {
+                        canvas.style.width = "960px";
+                        canvas.style.height = "540px";
+                    }
+
+                    if (keyboardFullscreenEnabled) {
+                        document.getElementById("keyboard-fullscreen-controls").hidden = false;
+                        globalThis.MonoGameWebHostValidation.reportKeyboardFullscreenState("Game ready");
+                    }
+
+                    if (query.has("drop-budget")) {
+                        void validateDropBudgetAsync(host).catch((error) => {
+                            console.error("[BrowserHostValidation]", "Drop-budget validation failed.", error);
+                            showShellError(error instanceof Error ? error.message : String(error));
+                        });
+                    }
+                },
+                onError: ({ stage, code, message }) => {
+                    showShellError(`${stage}: ${code} - ${message}`);
+
+                    globalThis.MonoGameWebHostValidation.reportPhase(stage, `${code}: ${message}`);
+                }
+            };
+            const host = start(hostOptions);
+
+            if (keyboardFullscreenEnabled) {
+                const state = document.getElementById("keyboard-fullscreen-state");
+                document.getElementById("keyboard-enter-fullscreen").addEventListener("click", async () => {
+                    try {
+                        if (typeof root.requestFullscreen !== "function") {
+                            state.textContent = "Fullscreen API is unavailable in this browser. A windowed dialog test is still possible.";
+                            return;
+                        }
+                        // Call directly from the DOM gesture, before awaiting anything.
+                        await root.requestFullscreen();
+                        globalThis.MonoGameWebHostValidation.reportKeyboardFullscreenState("Fullscreen request completed");
+                    }
+                    catch (error) {
+                        state.textContent = `Fullscreen request failed: ${error instanceof Error ? error.message : String(error)}`;
+                    }
+                });
+                document.getElementById("keyboard-exit-fullscreen").addEventListener("click", async () => {
+                    try {
+                        if (document.fullscreenElement != null) {
+                            await document.exitFullscreen();
+                        }
+                    }
+                    catch (error) {
+                        state.textContent = `Fullscreen exit failed: ${error instanceof Error ? error.message : String(error)}`;
+                    }
+                });
+                document.addEventListener("fullscreenchange", () => globalThis.MonoGameWebHostValidation.reportKeyboardFullscreenState("Fullscreen changed"));
+                root.addEventListener("focusin", (event) => {
+                    if (event.target instanceof HTMLInputElement && event.target.closest("dialog") != null) {
+                        globalThis.MonoGameWebHostValidation.reportKeyboardFullscreenState("Input focused");
+                    }
+                });
+            }
+
+            if (query.has("single-active-host")) {
+                try {
+                    start(hostOptions);
+                    throw new Error("The browser host accepted a second active session.");
+                }
+                catch (error) {
+                    if (error?.code !== "host_already_active") {
+                        throw error;
+                    }
+
+                    globalThis.MonoGameWebHostValidation.reportPhase(
+                        "singleActiveHostValidated",
+                        "The second browser-host start was rejected while the first session remained active.");
+                }
+            }
+
+            if (query.has("fullscreen")) {
+                const fullscreenButton = document.createElement("button");
+                fullscreenButton.id = "fullscreen-validation-control";
+                fullscreenButton.type = "button";
+                fullscreenButton.textContent = "Enter fullscreen";
+                fullscreenButton.addEventListener("click", () => host.window.requestFullscreen());
+                root.appendChild(fullscreenButton);
+
+                document.addEventListener("fullscreenchange", () => {
+                    const fullscreen = document.fullscreenElement === root;
+                    globalThis.MonoGameWebHostValidation.reportPhase(
+                        "browserFullscreenChanged",
+                        `Browser host fullscreen is ${fullscreen ? "active" : "inactive"}.`);
+                });
+            }
+
+            if (query.has("host-stop-startup")) {
+                const stopping = host.stop();
+                if (stopping !== host.stop()) {
+                    throw new Error("Repeated stop calls returned different promises.");
+                }
+
+                try {
+                    await host.ready;
+                    throw new Error("A stopped startup reported readiness.");
+                }
+                catch (error) {
+                    if (error?.code !== "host_stopped") {
+                        throw error;
+                    }
+                }
+
+                await stopping;
+                globalThis.MonoGameWebHostValidation.reportPhase("hostStartupStopValidated", "Stopped before runtime startup and rejected readiness.");
+            }
+            else if (query.has("host-ready-error")) {
+                try {
+                    await host.ready;
+                    throw new Error("Failed startup reported readiness.");
+                }
+                catch (error) {
+                    if (error?.code !== "content_manifest_fetch_failed") {
+                        throw error;
+                    }
+                }
+
+                await host.stop();
+                globalThis.MonoGameWebHostValidation.reportPhase("hostReadyFailureValidated", "Startup failure rejected readiness and completed cleanup.");
+            }
+            else if (query.has("host-stop-entry")) {
+                try {
+                    await host.ready;
+                    throw new Error("The game started after an entry-point stop request.");
+                }
+                catch (error) {
+                    if (error?.code !== "host_stopped") {
+                        throw error;
+                    }
+                }
+
+                await entryStopCompletion;
+                globalThis.MonoGameWebHostValidation.reportPhase("hostEntryStopValidated", "Stopped while the entry point staged content, before the game started.");
+            }
+            else if (query.has("host-stop")) {
+                await host.ready;
+                globalThis.MonoGameWebHostValidation.reportPhase("hostReadyValidated", "Readiness resolved after the first frame.");
+                const stopping = host.stop();
+                if (stopping !== host.stop()) {
+                    throw new Error("Repeated stop calls returned different promises.");
+                }
+
+                await stopping;
+                if (globalThis.MonoGameWebHost.getActiveHost() != null) {
+                    throw new Error("The stopped host retained its active browser bridge.");
+                }
+
+                globalThis.MonoGameWebHostValidation.reportPhase("hostStopValidated", "Managed exit and browser cleanup completed through stop().");
+            }
+        }
+        catch (error) {
+            showShellError(error instanceof Error ? error.message : "The MonoGame browser host could not start.");
+
+            console.error("[BrowserHostValidation]", "Validation bootstrap failed.", error);
+        }
+    </script>
+</body>
+</html>
